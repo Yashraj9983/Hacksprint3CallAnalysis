@@ -16,7 +16,7 @@ def read_wave(path):
     """
     with contextlib.closing(wave.open(path, 'rb')) as wf:
         num_channels = wf.getnchannels()
-        assert num_channels == 2
+        assert num_channels == 1
         sample_width = wf.getsampwidth()
         assert sample_width == 2
         sample_rate = wf.getframerate()
@@ -31,7 +31,7 @@ def write_wave(path, audio, sample_rate):
     Takes path, PCM audio data, and sample rate.
     """
     with contextlib.closing(wave.open(path, 'wb')) as wf:
-        wf.setnchannels(2)
+        wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(sample_rate)
         wf.writeframes(audio)
@@ -148,7 +148,7 @@ from sklearn.mixture import GaussianMixture
 from copy import deepcopy
 from sklearn.cluster import SpectralClustering
 
-audio, sample_rate = read_wave('input/test1.wav')
+audio, sample_rate = read_wave('input/test.wav')
 vad = webrtcvad.Vad(2)
 frames = frame_generator(30, audio, sample_rate)
 frames = list(frames)
@@ -283,3 +283,24 @@ print(labels)
 #Normally the call center agent is the first one to speak and then the customer
 #If that is not the case for a specific audio, change the condition from 'x==1' to 'x==0'
 print([i for i, x in enumerate(labels) if x == 1])
+user = [i for i, x in enumerate(labels) if x == 1]
+
+#Segregating both voices
+import os
+import glob
+import shutil
+
+files_path = os.getcwd() + '/chunk-*.wav'
+if not os.path.isdir('customer'):
+        os.mkdir('customer')
+if not os.path.isdir('employee'):
+        os.mkdir('employee')
+
+for i,file in enumerate(sorted(glob.iglob(files_path))):
+    # print(file)
+    if i in user:
+        shutil.move(file, os.getcwd()+'/customer')
+    else:
+        shutil.move(file, os.getcwd()+'/employee')
+
+
