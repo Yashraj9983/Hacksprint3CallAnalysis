@@ -148,14 +148,14 @@ from sklearn.mixture import GaussianMixture
 from copy import deepcopy
 from sklearn.cluster import SpectralClustering
 
-audio, sample_rate = read_wave('input/test.wav')
+audio, sample_rate = read_wave('input/test4.wav')
 vad = webrtcvad.Vad(2)
 frames = frame_generator(30, audio, sample_rate)
 frames = list(frames)
 segments = vad_collector(sample_rate, 30, 300, vad, frames)
 c = 0
 for i, segment in enumerate(segments):
-    path = 'chunk-%002d.wav' % (i,)
+    path = 'output/chunk-%002d.wav' % (i,)
     print(' Writing %s' % (path,))
     write_wave(path, segment, sample_rate)
     c +=1
@@ -172,7 +172,7 @@ components = 16
 cov_type = 'full'
 
 ########################### Global GMM i.e UBM ###########################
-test_file_path = sys.argv[1]
+test_file_path = "output/chunk-00.wav"
 y,sr = librosa.load(test_file_path)
 print(np.shape(y))
 
@@ -243,7 +243,7 @@ def MAP_Estimation(model,data,m_iterations):
 Total = []
 relevance_factor = 16
 for i in range(c):
-    fname='chunk-%002d.wav' % (i,)
+    fname='output/chunk-%002d.wav' % (i,)
     print('MAP adaptation for {0}'.format(fname))
     temp_y,sr_temp = librosa.load(fname,sr=None)
     
@@ -282,25 +282,5 @@ print(labels)
 #we have assumed that customer is the one who speaks 2nd
 #Normally the call center agent is the first one to speak and then the customer
 #If that is not the case for a specific audio, change the condition from 'x==1' to 'x==0'
-print([i for i, x in enumerate(labels) if x == 1])
-user = [i for i, x in enumerate(labels) if x == 1]
-
-#Segregating both voices
-import os
-import glob
-import shutil
-
-files_path = os.getcwd() + '/chunk-*.wav'
-if not os.path.isdir('customer'):
-        os.mkdir('customer')
-if not os.path.isdir('employee'):
-        os.mkdir('employee')
-
-for i,file in enumerate(sorted(glob.iglob(files_path))):
-    # print(file)
-    if i in user:
-        shutil.move(file, os.getcwd()+'/customer')
-    else:
-        shutil.move(file, os.getcwd()+'/employee')
-
-
+print('speaker0:',[i for i, x in enumerate(labels) if x == 0])
+print('speaker1:',[i for i, x in enumerate(labels) if x == 1])
