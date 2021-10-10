@@ -3,7 +3,7 @@
 
 # Done:
 
-convert mp3 to wave file
+convert mp3 to wav file
 
 speaker diarization
 
