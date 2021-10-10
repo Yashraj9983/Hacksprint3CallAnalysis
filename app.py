@@ -1,13 +1,136 @@
+from flask import Flask, flash,render_template, request, redirect, url_for, session
+import re
 import collections
 import contextlib
 import sys
 import wave
-
 import webrtcvad
 import librosa
+from sklearn import preprocessing
+import numpy as np
+from sklearn.mixture import GaussianMixture
+from copy import deepcopy
+from sklearn.cluster import SpectralClustering
 
-# Referred the following link:
-# https://github.com/wiseman/py-webrtcvad/blob/master/example.py
+app = Flask(__name__)
+app.secret_key = 'TIGER'
+relevance_factor = 16
+
+@app.route('/', methods=['GET', 'POST'])
+def select_audio():
+    msg = 'Please select audio file'
+    if request.method == 'POST' and 'audiopath' in request.form :
+        audiopath = request.form['audiopath']
+        session['audiopath']=audiopath
+        return redirect(url_for('home'))
+        
+    return render_template('index.html', msg=msg)
+
+@app.route("/home")
+def home():
+
+    return render_template("index.html",audiopath=session['audiopath'])
+
+@app.route('/home/diarization', methods=['POST'])
+def diratization():    
+    print('hooo')
+    if request.method == 'POST':
+        print(2)       
+        audiopath=session['audiopath']                
+                # validate the received values    
+        session['chunkPath']=audiopath+'output/'        
+                    
+                
+        ########################### IMPLEMENTATION ###########################
+        
+
+        audio, sample_rate = read_wave(audiopath+'input/test.wav')
+        vad = webrtcvad.Vad(2)
+        frames = frame_generator(30, audio, sample_rate)
+        frames = list(frames)
+        segments = vad_collector(sample_rate, 30, 300, vad, frames)
+        c = 0
+        for i, segment in enumerate(segments):
+            path = audiopath+'output/chunk-%002d.wav' % (i,)
+            print(' Writing %s' % (path,))
+            write_wave(path, segment, sample_rate)
+            c +=1
+        #count of chunks
+        # c = 14
+
+        sampling_rate = 8000
+        n_mfcc = 13
+        n_fft = 0.032
+        hop_length = 0.010
+
+        components = 16
+
+        cov_type = 'full'
+
+        ########################### Global GMM i.e UBM ###########################
+        test_file_path = audiopath+"output/chunk-00.wav"
+        y,sr = librosa.load(test_file_path)
+        print(np.shape(y))
+
+        mfcc = librosa.feature.mfcc(np.array(y),sr,hop_length=int(hop_length * sr),n_fft=int(n_fft*sr),n_mfcc=n_mfcc,dct_type=2)
+        mfcc_delta = librosa.feature.delta(mfcc)
+        mfcc_delta_second_order = librosa.feature.delta(mfcc,order=2)
+        temp = librosa.feature.delta(mfcc_delta)
+        inter = np.vstack((mfcc,mfcc_delta,mfcc_delta_second_order))
+        ubm_feature = inter.T
+        #ubm_feature = preprocessing.scale(ubm_feature)
+
+        # ubm_feature -= np.mean(ubm_feature)
+        # ubm_feature /= np.std(ubm_feature)
+
+        ubm_model = GaussianMixture(n_components = components, covariance_type = cov_type)
+        ubm_model.fit(ubm_feature)
+
+        print(ubm_model.score(ubm_feature))
+        print(ubm_model.means_)       
+                    
+                
+        Total = []
+        for i in range(c):
+            fname=audiopath+'output/chunk-%002d.wav' % (i,)
+            print('MAP adaptation for {0}'.format(fname))
+            temp_y,sr_temp = librosa.load(fname,sr=None)
+            
+            temp_mfcc = librosa.feature.mfcc(np.array(temp_y),sr_temp,hop_length=int(hop_length * sr_temp),n_fft=int(n_fft*sr_temp),n_mfcc=n_mfcc,dct_type=2)
+            temp_mfcc_delta = librosa.feature.delta(temp_mfcc)
+            temp_mfcc_delta_second_order = librosa.feature.delta(temp_mfcc,order=2)
+            temp_inter = np.vstack((temp_mfcc,temp_mfcc_delta,temp_mfcc_delta_second_order))
+            temp_gmm_feature = temp_inter.T
+            #data = preprocessing.scale(temp_gmm_feature)
+
+            gmm  = deepcopy(ubm_model)
+
+            gmm = MAP_Estimation(gmm,temp_gmm_feature,m_iterations =1)
+            
+            sv = gmm.means_.flatten()
+            #sv = preprocessing.scale(sv)
+            Total.append(sv)
+
+        N_CLUSTERS = 2        
+        sc = SpectralClustering(n_clusters=N_CLUSTERS, affinity='cosine')
+
+        #Labels help us identify between chunks of customer and call center agent
+        labels = sc.fit_predict(Total)
+        labels = rearrange(labels, N_CLUSTERS)
+        print(labels)
+        session['labels']=labels
+
+        #Since there is no way to identify the voice of a customer just from the audio
+        #we have assumed that customer is the one who speaks 2nd
+        #Normally the call center agent is the first one to speak and then the customer
+        #If that is not the case for a specific audio, change the condition from 'x==1' to 'x==0'
+        print([i for i, x in enumerate(labels) if x == 1])
+  
+
+        return redirect(url_for('.home'))
+    else:           
+        return 'Error while diratization'
+
 
 def read_wave(path):
     """Reads a .wav file.
@@ -141,57 +264,6 @@ def vad_collector(sample_rate, frame_duration_ms,
         yield b''.join([f.bytes for f in voiced_frames])
 
 
-########################### IMPLEMENTATION ###########################
-from sklearn import preprocessing
-import numpy as np
-from sklearn.mixture import GaussianMixture
-from copy import deepcopy
-from sklearn.cluster import SpectralClustering
-
-audio, sample_rate = read_wave('input/test4.wav')
-vad = webrtcvad.Vad(2)
-frames = frame_generator(30, audio, sample_rate)
-frames = list(frames)
-segments = vad_collector(sample_rate, 30, 300, vad, frames)
-c = 0
-for i, segment in enumerate(segments):
-    path = 'output/chunk-%002d.wav' % (i,)
-    print(' Writing %s' % (path,))
-    write_wave(path, segment, sample_rate)
-    c +=1
-#count of chunks
-# c = 14
-
-sampling_rate = 8000
-n_mfcc = 13
-n_fft = 0.032
-hop_length = 0.010
-
-components = 16
-
-cov_type = 'full'
-
-########################### Global GMM i.e UBM ###########################
-test_file_path = "output/chunk-00.wav"
-y,sr = librosa.load(test_file_path)
-print(np.shape(y))
-
-mfcc = librosa.feature.mfcc(np.array(y),sr,hop_length=int(hop_length * sr),n_fft=int(n_fft*sr),n_mfcc=n_mfcc,dct_type=2)
-mfcc_delta = librosa.feature.delta(mfcc)
-mfcc_delta_second_order = librosa.feature.delta(mfcc,order=2)
-temp = librosa.feature.delta(mfcc_delta)
-inter = np.vstack((mfcc,mfcc_delta,mfcc_delta_second_order))
-ubm_feature = inter.T
-#ubm_feature = preprocessing.scale(ubm_feature)
-
-# ubm_feature -= np.mean(ubm_feature)
-# ubm_feature /= np.std(ubm_feature)
-
-ubm_model = GaussianMixture(n_components = components, covariance_type = cov_type)
-ubm_model.fit(ubm_feature)
-
-print(ubm_model.score(ubm_feature))
-print(ubm_model.means_)
 
 
 def MAP_Estimation(model,data,m_iterations):
@@ -238,32 +310,6 @@ def MAP_Estimation(model,data,m_iterations):
         print(log_likelihood)
     return model
 
-
-
-Total = []
-relevance_factor = 16
-for i in range(c):
-    fname='output/chunk-%002d.wav' % (i,)
-    print('MAP adaptation for {0}'.format(fname))
-    temp_y,sr_temp = librosa.load(fname,sr=None)
-    
-    temp_mfcc = librosa.feature.mfcc(np.array(temp_y),sr_temp,hop_length=int(hop_length * sr_temp),n_fft=int(n_fft*sr_temp),n_mfcc=n_mfcc,dct_type=2)
-    temp_mfcc_delta = librosa.feature.delta(temp_mfcc)
-    temp_mfcc_delta_second_order = librosa.feature.delta(temp_mfcc,order=2)
-    temp_inter = np.vstack((temp_mfcc,temp_mfcc_delta,temp_mfcc_delta_second_order))
-    temp_gmm_feature = temp_inter.T
-    #data = preprocessing.scale(temp_gmm_feature)
-
-    gmm  = deepcopy(ubm_model)
-
-    gmm = MAP_Estimation(gmm,temp_gmm_feature,m_iterations =1)
-    
-    sv = gmm.means_.flatten()
-    #sv = preprocessing.scale(sv)
-    Total.append(sv)
-
-N_CLUSTERS = 2
-
 def rearrange(labels, n):
     seen = set()
     distinct = [x for x in labels if x not in seen and not seen.add(x)]
@@ -271,16 +317,8 @@ def rearrange(labels, n):
     dict_ = dict(zip(distinct, correct))
     return [x if x not in dict_ else dict_[x] for x in labels]
 
-sc = SpectralClustering(n_clusters=N_CLUSTERS, affinity='cosine')
 
-#Labels help us identify between chunks of customer and call center agent
-labels = sc.fit_predict(Total)
-labels = rearrange(labels, N_CLUSTERS)
-print(labels)
 
-#Since there is no way to identify the voice of a customer just from the audio
-#we have assumed that customer is the one who speaks 2nd
-#Normally the call center agent is the first one to speak and then the customer
-#If that is not the case for a specific audio, change the condition from 'x==1' to 'x==0'
-print('speaker0:',[i for i, x in enumerate(labels) if x == 0])
-print('speaker1:',[i for i, x in enumerate(labels) if x == 1])
+
+if __name__=="__main__":
+    app.run(debug=True);
