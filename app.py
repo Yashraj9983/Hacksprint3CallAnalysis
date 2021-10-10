@@ -11,6 +11,11 @@ import numpy as np
 from sklearn.mixture import GaussianMixture
 from copy import deepcopy
 from sklearn.cluster import SpectralClustering
+import speech_recognition as sr 
+import os 
+from pydub import AudioSegment
+from pydub.silence import split_on_silence
+from textblob import TextBlob
 
 app = Flask(__name__)
 app.secret_key = 'TIGER'
@@ -119,18 +124,28 @@ def diratization():
         labels = rearrange(labels, N_CLUSTERS)
         print(labels)
         session['labels']=labels
-
+        speaker0=[]
+        speaker1=[]
         #Since there is no way to identify the voice of a customer just from the audio
         #we have assumed that customer is the one who speaks 2nd
         #Normally the call center agent is the first one to speak and then the customer
         #If that is not the case for a specific audio, change the condition from 'x==1' to 'x==0'
-        print([i for i, x in enumerate(labels) if x == 1])
+        for i, x in enumerate(labels) :
+            if x == 0 :
+                speaker0.append(i)
+            elif x == 1 :    
+                speaker1.append(i)
+
+        print('speaker0:',speaker0)
+        print('speaker1:',speaker1)
+        session['speaker0']=speaker0
+        session['speaker1']=speaker1
+
   
 
         return redirect(url_for('.home'))
     else:           
         return 'Error while diratization'
-
 
 def read_wave(path):
     """Reads a .wav file.
@@ -317,8 +332,117 @@ def rearrange(labels, n):
     dict_ = dict(zip(distinct, correct))
     return [x if x not in dict_ else dict_[x] for x in labels]
 
+def get_sentiment(sentx):
+    analysis=TextBlob(sentx)
+    if analysis.sentiment.polarity > 0 :
+        return ('positive')
+    elif analysis.sentiment.polarity == 0 :
+        return ('neutral')  
+    else :
+        return ('negative')  
 
+def get_sentimentpol(sentx):
+    analysis=TextBlob(sentx)
+    return analysis.sentiment.polarity
 
+@app.route('/home/sentimentAnalysis', methods=['POST'])
+def sentimentAnalysis():    
+    if request.method == 'POST':
+        audiopath=session['audiopath']
+        r = sr.Recognizer()
+        speaker0Lines=[]
+        speaker1Lines=[]
+        speaker0=session['speaker0']
+        speaker1=session['speaker1']
+        total_duration=0
+        for i in speaker0:
+            # filename = "output/chunk-0{i}.wav"
+            filename=audiopath+'output/chunk-%002d.wav' % (i,)
+            with contextlib.closing(wave.open(filename,'r')) as f:
+                frames = f.getnframes()
+                rate = f.getframerate()
+                duration = frames / float(rate)
+                total_duration+=duration
+                print(duration)
+            print(filename)
+            r = sr.Recognizer()
+            with sr.AudioFile(filename) as source:
+                # listen for the data (load audio to memory)
+                audio_data = r.record(source)
+                # recognize (convert from speech to text)
+                try:
+                    text = r.recognize_google(audio_data)
+                except sr.UnknownValueError as e:
+                    print("Error:", str(e))
+                else:
+                    text = f"{text.capitalize()}. "
+                    print(text)
+                    speaker0Lines.append(text)
+        print(speaker0Lines)
+        session['duration0']=total_duration
+
+        total_duration=0
+        for i in speaker1:
+            # filename = "output/chunk-0{i}.wav"
+            filename=audiopath+'output/chunk-%002d.wav' % (i,)
+            with contextlib.closing(wave.open(filename,'r')) as f:
+                frames = f.getnframes()
+                rate = f.getframerate()
+                duration = frames / float(rate)
+                total_duration+=duration
+                print(duration)
+            print(filename)
+            r = sr.Recognizer()
+            with sr.AudioFile(filename) as source:
+                # listen for the data (load audio to memory)
+                audio_data = r.record(source)
+                # recognize (convert from speech to text)
+                try:
+                    text = r.recognize_google(audio_data)
+                except sr.UnknownValueError as e:
+                    print("Error:", str(e))
+                else:
+                    text = f"{text.capitalize()}. "
+                    print(text)
+                    speaker1Lines.append(text)
+        print(speaker1Lines)
+        session['duration1']=total_duration
+
+        sentiments_total0 = {'neutral':0,'positive':0,'negative':0}
+        mood0=[]
+        mood00=[]
+        for recd_sent in speaker0Lines:
+            sentiment = get_sentiment(recd_sent)
+            print(sentiment,'===>',recd_sent)
+            sentiments_total0[sentiment]= sentiments_total0[sentiment]+1
+            mood0.append(get_sentimentpol(recd_sent))
+            print('##################')
+        print(sentiments_total0)    
+        for i in range(len(mood0)):
+            mood00.append(i+1)
+        session['sentiments0']=sentiments_total0
+        session['mood0']=mood0
+        session['mood00']=mood00
+
+        sentiments_total1 = {'neutral':0,'positive':0,'negative':0}
+        mood1=[]
+        mood10=[]
+        for recd_sent in speaker1Lines:
+            sentiment = get_sentiment(recd_sent)
+            print(sentiment,'===>',recd_sent)
+            sentiments_total1[sentiment]= sentiments_total1[sentiment]+1
+            mood1.append(get_sentimentpol(recd_sent))
+            print('##################')
+        print(sentiments_total1)    
+        for i in range(len(mood1)):
+            mood10.append(i+1)
+        session['sentiments1']=sentiments_total1
+        session['mood1']=mood1
+        session['mood10']=mood10
+
+        return redirect(url_for('.home'))
+    else:           
+        return 'Error while diratization'
 
 if __name__=="__main__":
     app.run(debug=True);
