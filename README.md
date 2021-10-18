@@ -9,7 +9,4 @@ speaker diarization
 
 Graphical User Interface: webApp implementation using Flask
 
-
-# In progress:
-
 speaker sentiment analysis 
